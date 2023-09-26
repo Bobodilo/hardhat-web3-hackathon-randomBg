@@ -5,32 +5,78 @@ import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 
-/**@title A Random BackgroundFactory
- * @author The Dude & Captain.fresh
- * @notice This contract is for creating a random decentralized s
+/*
+ * @title A Random BackgroundFactory
+ * @author Bonheur Balek's AKA The Dude
+ * @notice This contract is for creating an untamperable random background generator for our web2 Game
  * @dev This implements Chainlink VRF v2 and Chainlink Keepers
  */
 
-contract BackgroundFactory {
+error BackgroundFactory__NotOpen();
+error BackgroundFactory__UpkeepNotNeeded(uint256 backgroundFactoryState);
+
+contract BackgroundFactory is VRFConsumerBaseV2, AutomationCompatibleInterface {
     /* Types */
+    enum BackgroundFactoryState {
+        OPEN,
+        CREATING
+    }
     struct Background {
         string name;
-        uint dna;
+        uint256 dna;
     }
-    Background[] public backgrounds;
+
     /* State variable */
-    uint dnaDigits = 16;
-    uint dnaModulus = 10 ** dnaDigits;
+    Background[] public s_backgrounds;
+    VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
+    bytes32 private immutable i_gasLane;
+    uint64 private immutable i_subscriptionId;
+    uint32 private immutable i_callbackGasLimit;
+    uint16 private constant REQUEST_CONFIRMATIONS = 3;
+    uint32 private constant NUM_WORDS = 1;
+    uint256 private constant DNADIGITS = 16;
+    uint256 private constant DNAMODULUS = 10 ** DNADIGITS;
+
+    /* Factory variables */
+    uint256 private s_recentRandomDna;
+    BackgroundFactoryState private s_backgroundFactoryState;
+    uint256 private s_lastTimeStamp;
+    uint256 private immutable i_interval;
 
     /* Events */
-    event NewBackground(uint backgroundId, string name, uint dna);
+    event NewBackground(uint256 backgroundId, string name, uint256 dna);
+    event RequestedRandomDna(uint256 indexed requestId);
+    event DnaPicked(uint256 indexed dnapicked);
+
+    constructor(
+        address vrfCoordinatorV2,
+        bytes32 gasLane,
+        uint64 subscriptionId,
+        uint32 callbackGasLimit,
+        uint256 interval
+    ) VRFConsumerBaseV2(vrfCoordinatorV2) {
+        i_vrfCoordinator = VRFCoordinatorV2Interface(vrfCoordinatorV2);
+        i_gasLane = gasLane;
+        i_subscriptionId = subscriptionId;
+        i_callbackGasLimit = callbackGasLimit;
+        s_backgroundFactoryState = BackgroundFactoryState.OPEN;
+        s_lastTimeStamp = block.timestamp;
+        i_interval = interval;
+    }
 
     /* functions */
+    // private function to create our background and emit an event
 
-    // private function to create our background and emits an event
-    function _createBackground(string memory _name, uint _dna) private {
-        backgrounds.push(Background(_name, _dna));
-        uint id = backgrounds.length - 1;
+    function createRandomBackground(string memory _name) public {
+        if (s_backgroundFactoryState != BackgroundFactoryState.OPEN) {
+            revert BackgroundFactory__NotOpen();
+        }
+        _createBackground(_name, s_recentRandomDna);
+    }
+
+    function _createBackground(string memory _name, uint256 _dna) private {
+        s_backgrounds.push(Background(_name, _dna));
+        uint256 id = s_backgrounds.length - 1;
         emit NewBackground(id, _name, _dna);
     }
 
@@ -39,13 +85,73 @@ contract BackgroundFactory {
      * they look for the `upkeepNeeded` to return true.
      * The following should be true in order to return true:
      * 1. Our time interval should have passed
-     * 2. The lotteru shoud have at least 1 player, and have some ETH
-     * 3. Our subscription is funded with LINK
-     * 4. The lottery should be in an "open" state.
+     * 2. Our subscription is funded with LINK
+     * 3. The Factory should be in an "open" state.
      */
-    function pickRandomBackground() external {
+
+    function checkUpkeep(
+        bytes memory /* checkData */
+    ) public override returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool isOpen = (BackgroundFactoryState.OPEN == s_backgroundFactoryState);
+        // (block.timeStamp - last block timeStamp) > interval
+        bool timePassed = (block.timestamp - s_lastTimeStamp > i_interval);
+        upkeepNeeded = (isOpen && timePassed);
+    }
+
+    function performUpkeep(bytes calldata /* performData */) external override {
+        (bool upkeepNeeded, ) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert BackgroundFactory__UpkeepNotNeeded(uint256(s_backgroundFactoryState));
+        }
         // request the random number
         //Once we get it, do smth with it
         // 2 transaction process
+        s_backgroundFactoryState = BackgroundFactoryState.CREATING;
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane,
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
+        emit RequestedRandomDna(requestId);
+    }
+
+    function fulfillRandomWords(
+        uint256 /* requestId */,
+        uint256[] memory randomWords
+    ) internal override {
+        uint256 indexOfRandomDna = randomWords[0] % DNAMODULUS;
+        s_recentRandomDna = indexOfRandomDna;
+        s_backgroundFactoryState = BackgroundFactoryState.OPEN;
+        //reset our array of struct
+        delete s_backgrounds;
+        s_lastTimeStamp = block.timestamp;
+        emit DnaPicked(s_recentRandomDna);
+    }
+
+    /* View / Pure functions */
+    function getRecentRandomBackground() public view returns (uint256) {
+        return s_recentRandomDna;
+    }
+
+    function getBackgroundFactoryState() public view returns (BackgroundFactoryState) {
+        return s_backgroundFactoryState;
+    }
+
+    function getNumwords() public pure returns (uint256) {
+        return NUM_WORDS;
+    }
+
+    function getNumberOfBackgrounds() public view returns (uint256) {
+        return s_backgrounds.length;
+    }
+
+    function getLatestTimeStamp() public view returns (uint256) {
+        return s_lastTimeStamp;
+    }
+
+    function getRequestConfirmations() public pure returns (uint256) {
+        return REQUEST_CONFIRMATIONS;
     }
 }
