@@ -73,7 +73,7 @@ module.exports = {
     },
     contractSizer: {
         runOnCompile: false,
-        only: ["Raffle"],
+        only: ["BackgroundFactory"],
     },
     namedAccounts: {
         deployer: {

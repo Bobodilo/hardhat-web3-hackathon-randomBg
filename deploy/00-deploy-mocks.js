@@ -1,7 +1,7 @@
 const { network } = require("hardhat")
 const { developmentsChains } = require("../helper-hardhat-config")
 
-const BASE_FEE = ethers.utils.parseEther("0.25") // 0,25 is the premium, it costs 0,25Link a request
+const BASE_FEE = ethers.parseEther("0.25") // 0,25 is the premium, it costs 0,25Link a request
 const GAS_PRICE_LINK = 1e9
 module.exports = async ({ getNamedAccounts, deployments }) => {
     const { deploy, log } = deployments
